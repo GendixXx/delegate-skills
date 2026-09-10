@@ -65,6 +65,7 @@ node "<skill-dir>/scripts/relay.mjs" --brief brief.txt --cd /path/to/repo
 # continue the latest session:           add --resume-last
 # continue the recorded session:         add --session <id>
 # choose limits:                         add --max-turns 40 --max-budget-usd 10
+# request provider auto-compaction:      add --autocompact 400k
 # hard relay deadline:                   add --timeout 2h
 # inspect every option:                  node .../relay.mjs --help
 ```
@@ -74,6 +75,10 @@ node "<skill-dir>/scripts/relay.mjs" --brief brief.txt --cd /path/to/repo
 The relay runs `claude -p --output-format stream-json --verbose`, sends the brief through stdin, and
 writes artifacts under the system temp directory by default. It never uses `--bg` or `--bare`, and it
 never commits. See [references/dispatch-and-poll.md](references/dispatch-and-poll.md).
+
+`--autocompact <auto|tokens>` passes Claude Code's launch option on every new or resumed invocation.
+Use only a value accepted by the installed Claude CLI; the relay records the requested value but does
+not claim that the provider applied or enforced it.
 
 ### 3. Wait
 

@@ -73,6 +73,57 @@ spawnSync(process.execPath,
 const inheritedCapture = existsSync(inheritedEnvFile) ? JSON.parse(readFileSync(inheritedEnvFile, "utf8")) : null;
 h.check("codex clean-env: without the flag the environment is still inherited",
   inheritedCapture?.SMOKE_SECRET_TOKEN === "inherited");
+// ---- codex PATH: Store WindowsApps entries never reach a sandboxed child on win32 ----
+// The two shapes a Store install puts on PATH: the package folder itself and the per-user
+// alias folder. Off win32 the relay must leave PATH byte-identical, entries like these included.
+const windowsAppsEntries = [
+  "C:\\Program Files\\WindowsApps\\Microsoft.PowerShell_7.6.5.0_x64__8wekyb3d8bbwe",
+  "C:\\Users\\smoke\\AppData\\Local\\Microsoft\\WindowsApps",
+];
+const pathWithWindowsApps = [windowsAppsEntries[0], h.baseEnv.PATH, windowsAppsEntries[1]].join(h.WIN ? ";" : ":");
+const pathWithoutWindowsApps = h.WIN
+  ? pathWithWindowsApps.split(";").filter((entry) => !/(^|[\\/])WindowsApps([\\/]|$)/i.test(entry)).join(";")
+  : pathWithWindowsApps;
+const windowsAppsEnv = { ...h.baseEnv, PATH: pathWithWindowsApps, ...(h.WIN ? { Path: pathWithWindowsApps } : {}) };
+const capturePath = (name, flags, extraEnv) => {
+  const envFile = join(h.scratch, `env-${name}`);
+  const preflightFile = join(h.scratch, `env-preflight-${name}`);
+  const run = spawnSync(process.execPath,
+    [h.relayPath("codex"), "--brief", h.briefPath, "--cd", h.freshRepo(`work-${name}`), "--out-dir", join(h.scratch, `out-${name}`), ...flags],
+    { env: { ...windowsAppsEnv, SMOKE_MODE: "capture", SMOKE_ARGS_FILE: join(h.scratch, `args-${name}`), SMOKE_ENV_FILE: envFile, SMOKE_PREFLIGHT_ENV_FILE: preflightFile, ...extraEnv }, encoding: "utf8" });
+  const read = (file) => (existsSync(file) ? JSON.parse(readFileSync(file, "utf8")).PATH : null);
+  return { status: run.status, dispatch: read(envFile), preflight: read(preflightFile) };
+};
+const sandboxedPath = capturePath("windowsapps-sandboxed", []);
+h.check("codex PATH: a sandboxed run completes with WindowsApps entries present", sandboxedPath.status === 0);
+h.check(`codex PATH: ${h.WIN ? "WindowsApps entries are removed from" : "off win32 nothing is removed from"} the dispatch PATH`,
+  sandboxedPath.dispatch === pathWithoutWindowsApps);
+h.check("codex PATH: the preflight sees the same PATH as the dispatch", sandboxedPath.preflight === sandboxedPath.dispatch);
+h.check("codex PATH: the shim entry survives the filter",
+  Boolean(sandboxedPath.dispatch?.split(h.WIN ? ";" : ":").includes(join(h.scratch, "shim"))));
+const readOnlyPath = capturePath("windowsapps-read-only", ["--read-only"]);
+h.check("codex PATH: --read-only filters like workspace-write", readOnlyPath.status === 0 && readOnlyPath.dispatch === pathWithoutWindowsApps);
+const fullAccessPath = capturePath("windowsapps-full-access", ["--sandbox", "danger-full-access"]);
+h.check("codex PATH: danger-full-access passes PATH through unchanged",
+  fullAccessPath.status === 0 && fullAccessPath.dispatch === pathWithWindowsApps && fullAccessPath.preflight === pathWithWindowsApps);
+writeFileSync(fallbackPath, JSON.stringify({
+  SMOKE_MODE: "capture",
+  SMOKE_ARGS_FILE: join(h.scratch, "args-windowsapps-clean-env"),
+  SMOKE_ENV_FILE: join(h.scratch, "env-windowsapps-clean-env"),
+  SMOKE_PREFLIGHT_ENV_FILE: join(h.scratch, "env-preflight-windowsapps-clean-env"),
+}));
+const cleanEnvPath = spawnSync(process.execPath,
+  [h.relayPath("codex"), "--brief", h.briefPath, "--cd", h.freshRepo("work-windowsapps-clean-env"), "--out-dir", join(h.scratch, "out-windowsapps-clean-env"), "--clean-env"],
+  { env: windowsAppsEnv, encoding: "utf8" });
+rmSync(fallbackPath, { force: true });
+const cleanEnvPathCapture = existsSync(join(h.scratch, "env-windowsapps-clean-env"))
+  ? JSON.parse(readFileSync(join(h.scratch, "env-windowsapps-clean-env"), "utf8")).PATH : null;
+h.check("codex PATH: --clean-env filters the kept PATH the same way",
+  cleanEnvPath.status === 0 && cleanEnvPathCapture === pathWithoutWindowsApps);
+const windowsAppsHelp = spawnSync(process.execPath, [h.relayPath("codex"), "--help"], { encoding: "utf8" });
+h.check("codex PATH: help documents the WindowsApps filter and the full-access exemption",
+  windowsAppsHelp.status === 0 && windowsAppsHelp.stdout.includes("WindowsApps") && windowsAppsHelp.stdout.includes("0xC0070005")
+    && windowsAppsHelp.stdout.includes("danger-full-access") && windowsAppsHelp.stdout.includes("PATH unchanged"));
 for (const [name, flags] of [
   ["requires clean-env", ["--keep-env", "HOME"]],
   ["rejects an invalid name", ["--clean-env", "--keep-env", "BAD-NAME"]],

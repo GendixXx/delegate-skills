@@ -614,6 +614,21 @@ function dispatchToCodex(opts, brief, run, writeResult, env) {
     });
   }
 
+  // A grandchild that outlives codex and inherited the pipes keeps stdout/stderr open, so
+  // "close" never fires and the relay waits forever, writing no result. Once codex itself is
+  // gone the pipes hold nothing we still need — finalMessage is read from the -o file, and the
+  // stderr log is appended synchronously as it arrives — so drop them after a short drain
+  // grace and let "close" run. This is the normal-exit twin of the stream teardown the
+  // watchdog already does on the timeout path.
+  child.once("exit", () => {
+    const drain = setTimeout(() => {
+      if (settled) return;
+      child.stdout.destroy();
+      child.stderr.destroy();
+    }, 500);
+    if (typeof drain.unref === "function") drain.unref();
+  });
+
   child.on("error", (err) => {
     if (settled) return;
     settled = true;

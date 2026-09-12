@@ -170,4 +170,35 @@ for (const [mode, expectedTail] of [
     run.status === 7 && result?.status === "failed" && result.exitCode === 7 &&
     JSON.stringify(result.stderrTail) === JSON.stringify(expectedTail));
 }
+
+// ---- codex: a normal exit must settle even while an orphan holds the stdio pipes ----
+// codex runs each command through a shell, and on Windows a grandchild of that shell
+// routinely outlives it. Having inherited the pipes, it keeps the relay's stdout/stderr
+// open after codex itself is gone: "exit" fires and "close" never does. A relay that
+// settles only on "close" then waits forever and writes no result.json, so the
+// orchestrator sees a run that neither completed nor failed. The watchdog is not a
+// backstop here — a run without --timeout has none, and one with a timeout reports
+// "timeout" for a run that actually succeeded.
+const orphanOutDir = join(h.scratch, "out-orphan-codex");
+const orphanGrandPidFile = join(h.scratch, "grandpid-orphan-codex");
+const orphanRun = spawnSync(process.execPath,
+  [h.relayPath("codex"), "--brief", h.briefPath,
+    "--cd", h.freshRepo("work-orphan-codex"), "--out-dir", orphanOutDir],
+  {
+    env: { ...h.baseEnv, SMOKE_MODE: "orphan-holds-stdio", SMOKE_GRAND_PID_FILE: orphanGrandPidFile },
+    encoding: "utf8",
+    timeout: 20_000,
+  });
+const orphanResult = existsSync(join(orphanOutDir, "result.json")) ? h.result(orphanOutDir) : null;
+h.check("codex orphan: the relay exits instead of waiting on the held pipes",
+  orphanRun.signal === null && orphanRun.status === 0);
+h.check("codex orphan: the successful run is reported as completed",
+  orphanResult?.status === "completed" && orphanResult.exitCode === 0);
+h.check("codex orphan: the final report survives the early stream teardown",
+  orphanResult?.finalMessage === "fake codex completed");
+// The relay does not own the orphan on the normal-exit path, so the suite must not leak it.
+if (existsSync(orphanGrandPidFile)) {
+  const orphanPid = Number(readFileSync(orphanGrandPidFile, "utf8"));
+  try { process.kill(orphanPid, "SIGKILL"); } catch { /* already gone */ }
+}
 }

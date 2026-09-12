@@ -20,6 +20,7 @@ import { runAider } from "./aider.mjs";
 import { runCopilot } from "./copilot.mjs";
 import { runCommandcode } from "./commandcode.mjs";
 import { runZcode } from "./zcode.mjs";
+import { runGrokGitTrust } from "./grok-git-trust.mjs";
 
 export const runners = [
   ["package-shape", runPackageShape],
@@ -40,6 +41,7 @@ export const runners = [
   ["copilot", runCopilot],
   ["commandcode", runCommandcode],
   ["read-only-tripwire", runReadOnlyTripwire],
+  ["grok-git-trust", runGrokGitTrust],
   ["timeout-tree", runTimeoutTree],
   ["abort", runAbort],
   ["zcode", runZcode],

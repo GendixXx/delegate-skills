@@ -46,6 +46,8 @@
  * Options:
  *   --brief <file>          Path to the brief. If omitted, the brief is read from stdin.
  *   --cd <dir>              Working root for Grok (default: current directory).
+ *   --trust-git-root <dir>  Explicitly trust this exact Git root for relay Git checks
+ *                           only; no persistent config or child permission changes.
  *   --lane <name>           Fleet lane from delegate-setup config (dials apply; explicit flags win).
  *   --model <name>          Grok model (default: Grok's own configured default).
  *   --effort <level>        Reasoning effort for this run (passed as `--effort`).
@@ -81,10 +83,10 @@
  * file must therefore also treat a non-zero exit with no file as a usage error.
  */
 
-import { spawn, execFileSync, spawnSync } from "node:child_process";
+import { spawn, execFileSync as nativeExecFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdirSync, writeFileSync, renameSync, readFileSync, readdirSync, existsSync, appendFileSync, lstatSync, readlinkSync, openSync, readSync, closeSync, realpathSync } from "node:fs";
-import { join, relative, resolve, basename, dirname } from "node:path";
+import { join, relative, resolve, basename, dirname, isAbsolute, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { constants, tmpdir } from "node:os";
 import { StringDecoder } from "node:string_decoder";
@@ -97,6 +99,44 @@ const MAX_TIMER_MS = 2_147_483_647;
 const AUTONOMY_MODES = new Set(["workspace-write", "read-only", "full-access"]);
 
 const IMPLEMENTER_KEY = "grok";
+
+let trustedGitRoot = null;
+
+function insideGitRoot(root, cwd) {
+  const path = relative(root, realpathSync(cwd));
+  return path === "" || (path !== ".." && !path.startsWith(`..${sep}`) && !isAbsolute(path));
+}
+
+function configureGitTrust(opts) {
+  if (opts.trustGitRoot === null) return;
+  try {
+    // Reject Git's wildcard trust syntax even on filesystems allowing literal '*'.
+    if (opts.trustGitRoot.includes("*")) throw new Error("wildcard trust is unsupported");
+    const root = realpathSync(resolve(opts.trustGitRoot));
+    if (root.includes("*")) throw new Error("wildcard trust is unsupported");
+    if (!insideGitRoot(root, opts.cd)) throw new Error("--cd is outside the supplied root");
+    const reported = nativeExecFileSync("git", ["-c", `safe.directory=${root.replaceAll("\\", "/")}`,
+      "rev-parse", "--show-toplevel"], {
+      cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 10_000,
+    }).replace(/\r?\n$/, "");
+    if (relative(root, realpathSync(reported)) !== "") throw new Error("path is not a Git worktree root");
+    trustedGitRoot = root.replaceAll("\\", "/");
+  } catch {
+    fail("--trust-git-root must name an accessible exact Git worktree root containing --cd; Git must be available (wildcards are unsupported)");
+  }
+}
+
+function execFileSync(file, args, options) {
+  // Scope trust at the process boundary so the shared Git helpers stay identical.
+  // Never mutate GIT_CONFIG_* or pass this exception to the Grok child process.
+  if (file === "git" && trustedGitRoot !== null) {
+    if (!insideGitRoot(trustedGitRoot, options?.cwd ?? process.cwd())) {
+      throw new Error("Git check is outside the explicitly trusted root");
+    }
+    return nativeExecFileSync(file, ["-c", `safe.directory=${trustedGitRoot}`, ...args], options);
+  }
+  return nativeExecFileSync(file, args, options);
+}
 
 function makeEventScanner(onObject) {
   let buf = "";
@@ -208,6 +248,7 @@ function parseArgs(argv) {
     laneSource: null,
     brief: null,
     cd: process.cwd(),
+    trustGitRoot: null,
     model: null,
     effort: null,
     maxTurns: null,
@@ -233,6 +274,7 @@ function parseArgs(argv) {
         break;
       case "--brief": opts.brief = next(); break;
       case "--cd": opts.cd = resolve(next()); break;
+      case "--trust-git-root": opts.trustGitRoot = next(); break;
       case "--lane": opts.lane = next(); break;
       case "--model": opts.model = next(); flagged.add("model"); break;
       case "--effort": opts.effort = next(); flagged.add("effort"); break;
@@ -762,6 +804,7 @@ function makeResultWriter(opts, version, run) {
       laneSource: opts.laneSource,
       tool: "grok",
       workdir: opts.cd,
+      trustedGitRoot,
       autonomy: opts.autonomy,
       model: opts.model,
       effort: opts.effort,
@@ -990,6 +1033,7 @@ function dispatchToGrok(opts, run, writeResult) {
 
 function main() {
   const opts = parseArgs(process.argv.slice(2));
+  configureGitTrust(opts);
   const brief = readBrief(opts);
   if (!brief.trim()) fail("empty brief (pass --brief <file> or pipe the brief on stdin)");
 

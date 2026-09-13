@@ -330,7 +330,18 @@ Per skill — platform, CLI version, and what the run exercised:
   picked a moment ago" — and it answered correctly, confirming the resumed turn saw prior context, not
   just that the id was accepted. Contract-tested: argument validation,
   bounded version preflight, missing binary, result parsing, and whole-process-tree timeout/abort
-  cleanup. No Windows or Linux run is recorded.
+  cleanup. Windows 11, `codex` codex-cli 0.153.4, native (Git Bash launch, no `pwsh` installed):
+  a `workspace-write` dispatch against a throwaway repo created the briefed file and reported it
+  in `touchedFiles` with `status: "completed"`, exit 0, and a `threadId`; the brief had Codex run
+  shell commands and report its shell, which came back as System32 `powershell.exe` 5.1 with zero
+  `WindowsApps` entries on its `PATH` while the parent process carried one — the relay's PATH
+  filter reaching the sandbox, not just the child's argv. The denial the filter exists for was
+  reproduced through the unpatched relay on the same machine: a `workspace-write` dispatch asked
+  Codex to run `winget`, which lives only under `WindowsApps`, and both the PATH lookup and the
+  absolute path failed inside the sandbox with "The file cannot be accessed by the system" while
+  the same binary ran normally outside it. No Store `pwsh` is installed here, so the shell-launch
+  form of that denial (`0xC0070005` on every command) rests on the report in issue #116. No Linux
+  run is recorded.
 - `opencode-delegate`, `vibe-delegate` — contract-tested only: argument validation, bounded version
   preflight, missing binary, result parsing, and whole-process-tree timeout/abort cleanup. No
   end-to-end run is recorded here.

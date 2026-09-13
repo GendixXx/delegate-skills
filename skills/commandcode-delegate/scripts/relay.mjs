@@ -1125,6 +1125,9 @@ function dispatchToCommandCode(opts, brief, run, writeResult, env) {
   // "close" run. This is the normal-exit twin of the stream teardown the watchdog already
   // does on the timeout path.
   child.once("exit", () => {
+    // The implementer already exited. Leaving the watchdog armed lets a drain that
+    // overlaps the remaining budget fire, set watchdogFired, and report timeout.
+    if (!watchdogFired) clearWatchdog();
     const drain = setTimeout(() => {
       if (settled) return;
       child.stdout.destroy();

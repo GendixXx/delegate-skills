@@ -98,6 +98,10 @@ if (process.env.SMOKE_MODE === "orphan-holds-stdio") {
     fs.writeFileSync(process.env.SMOKE_GRAND_PID_FILE, String(grand.pid));
   }
   grand.unref();
+  const delayMs = Number(process.env.SMOKE_ORPHAN_EXIT_DELAY_MS || 0);
+  if (Number.isFinite(delayMs) && delayMs > 0) {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delayMs);
+  }
   process.exit(0);
 }
 if (process.env.SMOKE_MODE === "codex-stderr-long-line") {

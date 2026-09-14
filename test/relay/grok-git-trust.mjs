@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { delimiter, dirname, join } from "node:path";
 
 export async function runGrokGitTrust(h) {
@@ -46,6 +46,25 @@ export async function runGrokGitTrust(h) {
   const clean = await run(root, flags);
   completed("grok explicit root", clean, [], false);
   h.check("grok records canonical trust", clean.result?.trustedGitRoot === realpathSync(root).replaceAll("\\", "/"));
+
+  // Regression guard for canonical divergence: the as-given root form (a symlink
+  // alias, passed as both --trust-git-root and --cd) differs from its realpath.
+  // This is NOT a reproducer of the Windows 8.3 short-name failure — POSIX git
+  // canonicalizes symlinks, so the old single-form code passed here too; Windows
+  // CI is what red/greens the actual bug.
+  const alias = join(h.scratch, "grok-trust-alias");
+  let aliased = false;
+  try {
+    symlinkSync(root, alias, "dir");
+    aliased = true;
+  } catch {
+    console.log("  skip  grok trust path alias: host cannot create directory symlinks");
+  }
+  if (aliased) {
+    const aliasRun = await run(alias, ["--trust-git-root", alias]);
+    completed("grok symlinked root", aliasRun, [], false);
+    h.check("grok symlinked root records canonical trust", aliasRun.result?.trustedGitRoot === realpathSync(alias).replaceAll("\\", "/"));
+  }
 
   writeFileSync(join(root, "dirty.txt"), "before\n");
   completed("grok pre-dirty unchanged", await run(root, flags), ["?? dirty.txt"], false);

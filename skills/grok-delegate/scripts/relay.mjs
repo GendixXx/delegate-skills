@@ -48,6 +48,9 @@
  *   --cd <dir>              Working root for Grok (default: current directory).
  *   --trust-git-root <dir>  Explicitly trust this exact Git root for relay Git checks
  *                           only; no persistent config or child permission changes.
+ *                           The relay passes safe.directory entries for both the
+ *                           path as given and its canonical form — git matches
+ *                           literal path forms (8.3 short names, symlinks).
  *   --lane <name>           Fleet lane from delegate-setup config (dials apply; explicit flags win).
  *   --model <name>          Grok model (default: Grok's own configured default).
  *   --effort <level>        Reasoning effort for this run (passed as `--effort`).
@@ -101,10 +104,17 @@ const AUTONOMY_MODES = new Set(["workspace-write", "read-only", "full-access"]);
 const IMPLEMENTER_KEY = "grok";
 
 let trustedGitRoot = null;
+// The same root in the form the user supplied it, forward-slashed for Git config.
+let trustedGitRootGiven = null;
 
 function insideGitRoot(root, cwd) {
   const path = relative(root, realpathSync(cwd));
   return path === "" || (path !== ".." && !path.startsWith(`..${sep}`) && !isAbsolute(path));
+}
+
+// Git config entries are matched against forward-slashed literal paths on Windows.
+function fwd(path) {
+  return path.replaceAll("\\", "/");
 }
 
 function configureGitTrust(opts) {
@@ -112,15 +122,22 @@ function configureGitTrust(opts) {
   try {
     // Reject Git's wildcard trust syntax even on filesystems allowing literal '*'.
     if (opts.trustGitRoot.includes("*")) throw new Error("wildcard trust is unsupported");
-    const root = realpathSync(resolve(opts.trustGitRoot));
+    const asGiven = resolve(opts.trustGitRoot);
+    const root = realpathSync(asGiven);
     if (root.includes("*")) throw new Error("wildcard trust is unsupported");
     if (!insideGitRoot(root, opts.cd)) throw new Error("--cd is outside the supplied root");
-    const reported = nativeExecFileSync("git", ["-c", `safe.directory=${root.replaceAll("\\", "/")}`,
+    // Git for Windows matches safe.directory against the literal path form it
+    // canonicalizes itself and does not expand 8.3 short names (runner temp dirs,
+    // subst drives), while Node's realpathSync expands them — this died on this
+    // PR's Windows CI. Pass both forms so the opt-in works under either.
+    const reported = nativeExecFileSync("git", ["-c", `safe.directory=${fwd(asGiven)}`,
+      "-c", `safe.directory=${fwd(root)}`,
       "rev-parse", "--show-toplevel"], {
-      cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 10_000,
+      cwd: asGiven, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 10_000,
     }).replace(/\r?\n$/, "");
     if (relative(root, realpathSync(reported)) !== "") throw new Error("path is not a Git worktree root");
-    trustedGitRoot = root.replaceAll("\\", "/");
+    trustedGitRootGiven = fwd(asGiven);
+    trustedGitRoot = fwd(root);
   } catch {
     fail("--trust-git-root must name an accessible exact Git worktree root containing --cd; Git must be available (wildcards are unsupported)");
   }
@@ -133,7 +150,8 @@ function execFileSync(file, args, options) {
     if (!insideGitRoot(trustedGitRoot, options?.cwd ?? process.cwd())) {
       throw new Error("Git check is outside the explicitly trusted root");
     }
-    return nativeExecFileSync(file, ["-c", `safe.directory=${trustedGitRoot}`, ...args], options);
+    return nativeExecFileSync(file, ["-c", `safe.directory=${trustedGitRootGiven}`,
+      "-c", `safe.directory=${trustedGitRoot}`, ...args], options);
   }
   return nativeExecFileSync(file, args, options);
 }

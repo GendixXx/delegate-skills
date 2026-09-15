@@ -256,7 +256,10 @@ Per skill — platform, CLI version, and what the run exercised:
   resume; read-only is best-effort by measurement, hence the violation flag.
   Contributor-run native Windows check with `grok` 1.0.13: a no-edit dispatch using
   `--trust-git-root` on a drive rejected by Git's ownership check completed with the pre-existing
-  untracked file reported and `readOnlyViolation: false`. Ownership, nested-directory, linked-worktree,
+  untracked file reported and `readOnlyViolation: false`; that run used a real drive path whose
+  spelling did not diverge, and the verdict is claimed for Windows paths whose spelling does not
+  diverge — exact-head CI evidence for spelling-divergent temp paths lands with this repair.
+  Ownership, nested-directory, linked-worktree,
   dirty-path, submodule, and unavailable-Git cases are covered by the `grok-git-trust` smoke module.
 - `kimi-delegate` — macOS, `kimi` 0.24.0: headless `-p` edit run, stream-json parsing, and both
   resume paths — the relay's `--session`/`--resume-last`, which drive Kimi's own `--session` and

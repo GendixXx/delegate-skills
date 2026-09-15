@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
-import { delimiter, dirname, join } from "node:path";
+import { basename, delimiter, dirname, join } from "node:path";
 
 export async function runGrokGitTrust(h) {
   const config = join(h.scratch, "grok-trust.gitconfig");
@@ -51,11 +51,9 @@ export async function runGrokGitTrust(h) {
   completed("grok explicit root", clean, [], false);
   h.check("grok records canonical trust", clean.result?.trustedGitRoot === realpathSync(root).replaceAll("\\", "/"));
 
-  // Regression guard for canonical divergence: the as-given root form (a symlink
-  // alias, passed as both --trust-git-root and --cd) differs from its realpath.
-  // This is NOT a reproducer of the Windows 8.3 short-name failure — POSIX git
-  // canonicalizes symlinks, so the old single-form code passed here too; Windows
-  // CI is what red/greens the actual bug.
+  // Regression guard for canonical divergence: this symlink case guards the
+  // as-given vs realpath divergence via symlinks, while the case-divergent
+  // root case below covers git-vs-Node spelling divergence portably.
   const alias = join(h.scratch, "grok-trust-alias");
   let aliased = false;
   try {
@@ -76,6 +74,18 @@ export async function runGrokGitTrust(h) {
   const nested = join(root, "nested");
   mkdirSync(nested);
   completed("grok nested cwd", await run(nested, flags), ["?? dirty.txt"], false);
+
+  // Windows CI's 8.3 temp path makes git's toplevel spelling differ from Node's
+  // realpath of the same directory. A case-insensitive filesystem reproduces that
+  // divergence portably — git reports on-disk case, Node keeps the given case — so
+  // this case red/greens the guard bug locally instead of needing Windows.
+  const upperRoot = join(dirname(root), basename(root).toUpperCase());
+  if (upperRoot !== root && existsSync(upperRoot)) {
+    completed("grok case-divergent root", await run(upperRoot, ["--trust-git-root", upperRoot]),
+      ["?? dirty.txt"], false);
+  } else {
+    console.log("  skip  grok case-divergent root: case-sensitive filesystem");
+  }
 
   git(root, ["add", "dirty.txt"]);
   git(root, ["-c", "user.name=Smoke", "-c", "user.email=smoke@example.invalid", "commit", "-qm", "fixture"]);

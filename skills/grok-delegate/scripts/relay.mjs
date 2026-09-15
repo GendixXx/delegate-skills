@@ -135,6 +135,8 @@ function fwd(path) {
 // follows symlinks, and on Windows Node fills dev/ino from the NT file index,
 // which is spelling-independent (8.3 vs long form, case, separators). Filesystems
 // where ino is unusable (0) on either side fall back to the realpath comparison.
+// The execFileSync trust guard obeys this rule too: on-disk identity for the
+// trusted root itself, string containment for everything beyond it.
 function samePhysicalDir(a, b) {
   try {
     const sa = statSync(a);
@@ -189,7 +191,13 @@ function execFileSync(file, args, options) {
   // Scope trust at the process boundary so the shared Git helpers stay identical.
   // Never mutate GIT_CONFIG_* or pass this exception to the Grok child process.
   if (file === "git" && trustedGitRoot !== null) {
-    if (!insideGitRoot(trustedGitRoot, options?.cwd ?? process.cwd())) {
+    // cwd reaches this guard in two spellings: every check but one runs with the
+    // --cd spelling the user supplied, while gitIndexFingerprints runs in the
+    // toplevel spelling git itself reported — and those strings can differ for the
+    // same directory (Windows 8.3 temp paths, case-insensitive filesystems). Accept
+    // the root itself by on-disk identity and keep the string test for containment.
+    const callCwd = options?.cwd ?? process.cwd();
+    if (!samePhysicalDir(trustedGitRoot, callCwd) && !insideGitRoot(trustedGitRoot, callCwd)) {
       throw new Error("Git check is outside the explicitly trusted root");
     }
     // safe.directory entries form a list: git matches its own spelling first,

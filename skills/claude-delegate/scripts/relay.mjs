@@ -63,7 +63,8 @@
  *   --effort <level>                  low | medium | high | xhigh | max | ultracode
  *   --max-turns <n>                   Positive agentic-turn limit.
  *   --max-budget-usd <amount>         Positive decimal spend limit.
- *   --autocompact <auto|tokens>       Pass Claude's automatic-compaction setting.
+ *   --autocompact <auto|tokens>       Set Claude's auto-compact window.
+ *                                     Requires claude 2.1.221 or newer.
  *   --resume-last                     Map to Claude's --continue.
  *   --session <id>                    Map to Claude's --resume <id>.
  *                                     Mutually exclusive with --resume-last.

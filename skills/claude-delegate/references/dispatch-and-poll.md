@@ -36,7 +36,7 @@ node "<skill-dir>/scripts/relay.mjs" --brief brief.txt --cd /path/to/repo
 | `--effort <level>` | Claude effort: `low`, `medium`, `high`, `xhigh`, `max`, or `ultracode`; availability depends on the model. |
 | `--max-turns <n>` | Positive agentic-turn cap. |
 | `--max-budget-usd <amount>` | Positive decimal spend cap for print mode. |
-| `--autocompact <auto|tokens>` | Pass Claude Code's automatic-compaction setting. The relay validates a shell-safe shape; the installed Claude CLI owns the supported range. |
+| `--autocompact <auto\|tokens>` | Set Claude Code's auto-compact window on Claude Code `2.1.221` or newer. The relay validates a shell-safe shape; the installed Claude CLI owns the supported range. |
 | `--resume-last` | Resume the latest session for this cwd with Claude's `--continue`; send a delta brief. |
 | `--session <id>` | Resume a specific session with Claude's `--resume <id>`; mutually exclusive with `--resume-last`. |
 | `--read-only` | Plan mode with only Read, Glob, and Grep, plus a Git-visible change tripwire. |
@@ -175,9 +175,7 @@ all artifact paths. Failed, timed-out, and aborted runs include `stderrTail` whe
 launch/watchdog/signal failures include `error`.
 
 `autocompact` records only the value the relay requested and passed in argv. It is absent when the
-flag was omitted and is not proof that Claude Code applied or enforced the setting. If the installed
-CLI does not support the option or rejects its range, its non-zero exit and stderr are preserved; the
-relay does not retry without the flag.
+flag was omitted and is not proof that Claude Code applied or enforced the setting. On Claude Code older than 2.1.221 the launch fails with `unknown option '--autocompact'`; if a newer CLI rejects the value's range it fails at argument parsing. Either way the non-zero exit and stderr are preserved and the relay does not retry without the flag.
 
 The relay prints a concise summary and the complete final report to stdout, then exits with
 `result.json`'s `exitCode`.

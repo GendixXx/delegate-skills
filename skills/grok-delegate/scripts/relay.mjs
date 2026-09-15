@@ -92,7 +92,7 @@
 
 import { spawn, execFileSync as nativeExecFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, writeFileSync, renameSync, readFileSync, readdirSync, existsSync, appendFileSync, lstatSync, readlinkSync, openSync, readSync, closeSync, realpathSync } from "node:fs";
+import { mkdirSync, writeFileSync, renameSync, readFileSync, readdirSync, existsSync, appendFileSync, lstatSync, readlinkSync, openSync, readSync, closeSync, realpathSync, statSync } from "node:fs";
 import { join, relative, resolve, basename, dirname, isAbsolute, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { constants, tmpdir } from "node:os";
@@ -124,6 +124,28 @@ function fwd(path) {
   return path.replaceAll("\\", "/");
 }
 
+// Compare two paths by filesystem identity, not by resolved path STRING. Node's
+// fs.realpathSync — the JS implementation this relay imports — does not expand
+// Windows 8.3 short names, while git canonicalizes them away; on a runner whose
+// temp is `C:\Users\RUNNER~1\...`, the Node-resolved form of the user-supplied
+// path and the Node-resolved form of git's reported toplevel are different
+// strings even though they name the same directory. (Earlier PR rounds
+// plausibly died at that string comparison, not at the safe.directory match.)
+// So never compare resolved path strings across the Node/git boundary: statSync
+// follows symlinks, and on Windows Node fills dev/ino from the NT file index,
+// which is spelling-independent (8.3 vs long form, case, separators). Filesystems
+// where ino is unusable (0) on either side fall back to the realpath comparison.
+function samePhysicalDir(a, b) {
+  try {
+    const sa = statSync(a);
+    const sb = statSync(b);
+    if (sa.ino !== 0 && sb.ino !== 0) return sa.dev === sb.dev && sa.ino === sb.ino;
+    return relative(realpathSync(a), realpathSync(b)) === "";
+  } catch {
+    return false;
+  }
+}
+
 function configureGitTrust(opts) {
   if (opts.trustGitRoot === null) return;
   try {
@@ -139,13 +161,17 @@ function configureGitTrust(opts) {
     // below exists only to make this one query answer with git's own canonical
     // spelling of the root — it authorizes nothing else, is never persisted, and
     // is never used again. `reported` is then kept verbatim for every scoped
-    // relay git call, and the realpath equality check proves it resolves to the
-    // exact physical root the user named.
+    // relay git call, and an on-disk directory identity check — never a resolved
+    // path-string comparison (see samePhysicalDir) — proves it names the exact
+    // physical root the user supplied.
     const reported = nativeExecFileSync("git", ["-c", "safe.directory=*",
       "rev-parse", "--show-toplevel"], {
       cwd: asGiven, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 10_000,
     }).replace(/\r?\n$/, "");
-    if (relative(root, realpathSync(reported)) !== "") throw new Error("path is not a Git worktree root");
+    if (!samePhysicalDir(root, reported)) {
+      const detail = JSON.stringify({ asGiven, root, reported }).replace(/\s+/g, " ").slice(0, 300);
+      throw new Error(`path is not a Git worktree root (identity check failed: ${detail})`);
+    }
     trustedGitRoot = fwd(root);
     trustedGitRootGitForm = reported;
   } catch (err) {

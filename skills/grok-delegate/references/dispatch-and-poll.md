@@ -58,8 +58,9 @@ touched-files report shows only Grok's edits and nothing of the helper's own.
 If Grok completes but `touchedFiles` is `null`, inspect Git's error from the same working directory.
 For a repository you trust that Git rejects for dubious ownership, pass
 `--trust-git-root /path/to/repo`. Validation asks git once — through a single-use wildcard-trust
-query — for git's own canonical spelling of that exact root, verifies it against the path you
-supplied, and then supplies `git -c safe.directory=<that spelling>` only to the relay's own Git
+query — for git's own canonical spelling of that exact root, verifies it by comparing directory
+identity on disk against the path you supplied (immune to Windows path-spelling divergence such as
+8.3 short names), and then supplies `git -c safe.directory=<that spelling>` only to the relay's own Git
 checks (git matches safe.directory against literal path forms it canonicalizes itself, which Node
 cannot reproduce reliably on Windows). This does not edit global Git config, change Grok's sandbox
 or authentication, or make Grok's own Git commands trusted. Put any needed child-side Git

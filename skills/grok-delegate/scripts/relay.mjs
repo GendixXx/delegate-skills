@@ -691,7 +691,7 @@ function fingerprintPaths(root, paths) {
     if (file === FINGERPRINT_UNREADABLE || file === FINGERPRINT_DIRECTORY) complete = false;
     prints.set(path, { file, index: indexPrints?.get(path) ?? null });
   }
-  return { prints, complete };
+  return { prints, complete, indexProbeOk: indexPrints !== null };
 }
 
 function fingerprintDirtyPaths(cwd, excludedPaths) {
@@ -727,7 +727,11 @@ function changedDirtyPaths(before) {
       JSON.stringify(current.index) !== JSON.stringify(print.index);
     if (fileChanged || indexChanged) changed.push(path);
   }
-  return { changed: changed.sort(), complete: before.complete && now.complete };
+  return {
+    changed: changed.sort(),
+    complete: before.complete && now.complete,
+    indexProbeOk: before.indexProbeOk && now.indexProbeOk,
+  };
 }
 
 function readOnlyVerdict(beforeTree, afterTree, beforeFingerprints) {
@@ -737,8 +741,19 @@ function readOnlyVerdict(beforeTree, afterTree, beforeFingerprints) {
   const changed = changedDirtyPaths(beforeFingerprints);
   const porcelainMoved =
     beforeTree !== null && afterTree !== null && JSON.stringify(beforeTree) !== JSON.stringify(afterTree);
-  if (porcelainMoved || changed.changed.length > 0) return true;
-  if (beforeTree === null || afterTree === null || !changed.complete) return null;
+  // Observability only: when the verdict is anything but a clean false, name every signal that
+  // produced it so CI logs can tell "git missing" from "coverage incomplete" from a real write.
+  const diagnose = (value) => {
+    console.error(
+      `relay: read-only verdict ${value} (porcelainMoved=${porcelainMoved}, ` +
+      `changedPaths=[${changed.changed.join(",")}], complete=${changed.complete}, ` +
+      `indexProbeOk=${changed.indexProbeOk}, beforeTreeNull=${beforeTree === null}, ` +
+      `afterTreeNull=${afterTree === null})`,
+    );
+    return value;
+  };
+  if (porcelainMoved || changed.changed.length > 0) return diagnose(true);
+  if (beforeTree === null || afterTree === null || !changed.complete) return diagnose(null);
   return false;
 }
 

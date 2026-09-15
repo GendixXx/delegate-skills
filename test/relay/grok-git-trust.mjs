@@ -31,6 +31,10 @@ export async function runGrokGitTrust(h) {
     return { code, result, stderr };
   };
   const completed = (name, run, touched, violation) => {
+    // Surface the relay's fail() cause in CI logs when a case dies pre-dispatch.
+    if (run.code !== 0 || !run.result) {
+      console.error(`  relay stderr for ${name}: ${run.stderr.replace(/\s+/g, " ").trim().slice(0, 500)}`);
+    }
     h.check(`${name}: completed result contract`, run.code === 0 &&
       run.result?.schema === "delegate-relay.result.v1" && run.result.status === "completed" &&
       run.result.exitCode === 0 && run.result.signal === null && run.result.autonomy === "read-only");

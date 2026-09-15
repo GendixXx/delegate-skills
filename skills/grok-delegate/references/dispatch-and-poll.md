@@ -57,10 +57,13 @@ touched-files report shows only Grok's edits and nothing of the helper's own.
 
 If Grok completes but `touchedFiles` is `null`, inspect Git's error from the same working directory.
 For a repository you trust that Git rejects for dubious ownership, pass
-`--trust-git-root /path/to/repo`. The relay supplies `git -c safe.directory=<root>` — both the path
-as given and its canonical form, because Git matches literal path forms — only to its own
-Git checks. This does not edit global Git config, change Grok's sandbox or authentication, or make
-Grok's own Git commands trusted. Put any needed child-side Git instructions in the brief separately.
+`--trust-git-root /path/to/repo`. Validation asks git once — through a single-use wildcard-trust
+query — for git's own canonical spelling of that exact root, verifies it against the path you
+supplied, and then supplies `git -c safe.directory=<that spelling>` only to the relay's own Git
+checks (git matches safe.directory against literal path forms it canonicalizes itself, which Node
+cannot reproduce reliably on Windows). This does not edit global Git config, change Grok's sandbox
+or authentication, or make Grok's own Git commands trusted. Put any needed child-side Git
+instructions in the brief separately.
 
 The supplied path must be the exact existing worktree root containing `--cd`; nested working
 directories and linked worktree roots are supported. Wildcards, unrelated roots, and subdirectories

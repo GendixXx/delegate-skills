@@ -39,7 +39,7 @@ export async function runGrokGitTrust(h) {
       run.result?.schema === "delegate-relay.result.v1" && run.result.status === "completed" &&
       run.result.exitCode === 0 && run.result.signal === null && run.result.autonomy === "read-only");
     h.check(`${name}: exact touchedFiles`, JSON.stringify(run.result?.touchedFiles) === JSON.stringify(touched));
-    h.check(`${name}: readOnlyViolation (got ${run.result?.readOnlyViolation})`, run.result?.readOnlyViolation === violation);
+    h.check(`${name}: readOnlyViolation`, run.result?.readOnlyViolation === violation);
   };
   const root = h.freshRepo("grok-trust root");
   git(root, ["config", "core.autocrlf", "false"]);

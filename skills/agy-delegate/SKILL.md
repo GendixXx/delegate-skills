@@ -71,6 +71,7 @@ below is this skill's installed directory - the folder containing this `SKILL.md
 node "<skill-dir>/scripts/relay.mjs" --brief brief.txt --cd /path/to/repo
 # choose a model label:                 add --model "<label from agy models>"
 # reasoning effort (low, medium, high): add --effort high
+# let a headless run write files:       add --accept-edits  (commands stay denied; you run the gates)
 # read-only (plan mode — no edits):     add --read-only
 # enable Antigravity terminal sandbox:  add --sandbox
 # resume the most recent conversation:  add --resume-last  (delta brief only)
@@ -129,6 +130,12 @@ requests without prompting, including a request to act outside the sandbox. Do n
 `--sandbox` as an enforced boundary when the flags are combined; treat the run as full access.
 The relay fingerprints the working tree before and after a `--read-only` run to report
 `readOnlyViolation` in `result.json`.
+
+**For a write run, pass `--accept-edits`.** Without it, headless mode auto-denies every file edit.
+It approves edits inside the workspace only; terminal commands are still auto-denied, and one denied
+command ends the run with nothing. So a write brief must tell Antigravity not to run commands, and you
+run the gates in review. This is far narrower than `--dangerously-skip-permissions` and needs no
+settings changes.
 
 Headless `--print` cannot prompt, so Antigravity auto-denies anything it would have asked about.
 The relay reads those denials from the run's structured payload into `deniedActions`. A denial

@@ -39,10 +39,11 @@ Options:
 | `--conversation <id>` | Continue a specific Antigravity conversation; send only the delta brief. |
 | `--sandbox` | Enable Antigravity's terminal sandbox for the run. |
 | `--read-only` | Run in plan mode (`--mode plan`), removing write and edit paths; mutually exclusive with `--dangerously-skip-permissions`. |
+| `--accept-edits` | Run in `--mode accept-edits`: file edits inside the workspace are auto-approved, so a headless run can write. Terminal commands stay gated - a command attempt is still auto-denied - so briefs for this mode should forbid commands and the orchestrator runs the gates. Mutually exclusive with `--read-only`. |
 | `--dangerously-skip-permissions` | Pass Antigravity's permission-bypass flag; mutually exclusive with `--read-only`. Never use this unless the human explicitly accepts it. |
 | `--print-timeout <duration>` | Timeout agy itself applies to print mode (default: `30m`). |
 | `--timeout <dur>` | Relay-side watchdog (e.g. `30m`); overrides the default of `--print-timeout` plus a 60s grace. On expiry the agy process tree is killed and `result.json` gets `status: "timeout"`. Set it explicitly when agy may hang past its own print timeout. Malformed, zero, and out-of-range durations are rejected; the maximum is `596h31m23s`. |
-| `--add-dir <dir>` | Add an extra workspace directory. Repeatable; relative paths resolve against `--cd`. Fresh runs always add the `--cd` repo (absolute path) as a workspace dir. Edits inside extra workspaces are not reported in `touchedFiles`. |
+| `--add-dir <dir>` | Add an extra workspace directory. Repeatable; relative paths resolve against `--cd`. Every run - fresh or resumed - adds the `--cd` repo (absolute path) as a workspace dir; a resumed conversation does not keep the registration, and without it `--accept-edits` cannot approve edits. Edits inside extra workspaces are not reported in `touchedFiles`. |
 | `--out-dir <dir>` | Where artifacts go (default: a fresh dir under the system temp dir). |
 
 Artifacts default to the system temp dir on purpose: the repo under review stays clean, so the

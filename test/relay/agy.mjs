@@ -191,6 +191,60 @@ export async function runAgy(h) {
     jsonValue.usage?.total_tokens === 14 &&
     jsonValue.numTurns === 2);
 
+  const acceptArgsFile = join(h.scratch, "args-accept-edits-agy");
+  const acceptWorkDir = h.freshRepo("work-accept-edits-agy");
+  const acceptOutDir = join(h.scratch, "out-accept-edits-agy");
+  const acceptEdits = spawnSync(process.execPath, [
+    h.relayPath("agy"),
+    "--brief", h.briefPath,
+    "--cd", acceptWorkDir,
+    "--out-dir", acceptOutDir,
+    "--accept-edits",
+  ], {
+    env: { ...h.baseEnv, SMOKE_MODE: "agy-analysis", SMOKE_ARGS_FILE: acceptArgsFile },
+    encoding: "utf8",
+    timeout: 15_000,
+  });
+  const acceptValue = existsSync(join(acceptOutDir, "result.json")) ? h.result(acceptOutDir) : {};
+  h.check("agy accept-edits: the mode reaches agy and result metadata",
+    acceptEdits.status === 0 &&
+    h.pair(readArgs(acceptArgsFile), "--mode", "accept-edits") &&
+    acceptValue.acceptEdits === true &&
+    acceptValue.readOnly === false);
+
+  const resumeArgsFile = join(h.scratch, "args-accept-edits-resume-agy");
+  const resumeOutDir = join(h.scratch, "out-accept-edits-resume-agy");
+  const resumed = spawnSync(process.execPath, [
+    h.relayPath("agy"),
+    "--brief", h.briefPath,
+    "--cd", acceptWorkDir,
+    "--out-dir", resumeOutDir,
+    "--conversation", "agy-conv-resume-1",
+    "--accept-edits",
+  ], {
+    env: { ...h.baseEnv, SMOKE_MODE: "agy-analysis", SMOKE_ARGS_FILE: resumeArgsFile },
+    encoding: "utf8",
+    timeout: 15_000,
+  });
+  const resumeArgs = readArgs(resumeArgsFile);
+  h.check("agy accept-edits resume: the workspace is re-pinned so edits stay approvable",
+    resumed.status === 0 &&
+    h.pair(resumeArgs, "--conversation", "agy-conv-resume-1") &&
+    h.pair(resumeArgs, "--add-dir", acceptWorkDir) &&
+    h.pair(resumeArgs, "--mode", "accept-edits") &&
+    !resumeArgs.includes("--new-project"));
+
+  const acceptConflictOut = join(h.scratch, "out-accept-conflict-agy");
+  const acceptConflict = spawnSync(process.execPath, [
+    h.relayPath("agy"),
+    "--brief", h.briefPath,
+    "--out-dir", acceptConflictOut,
+    "--read-only",
+    "--accept-edits",
+  ], { env: h.baseEnv, encoding: "utf8" });
+  h.check("agy accept-edits: combining with --read-only is rejected before any run",
+    acceptConflict.status === 2 && !existsSync(join(acceptConflictOut, "result.json")));
+
   const jsonDenied = run("json-denied-noop", "agy-json-denied-noop");
   h.check("agy json: a denial that produced nothing is failed and names the action",
     jsonDenied.result.status === 1 &&

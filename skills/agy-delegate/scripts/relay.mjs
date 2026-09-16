@@ -44,6 +44,9 @@
  *   --sandbox               Enable Antigravity's terminal sandbox for this run.
  *   --read-only             Run in plan mode (`--mode plan`), removing write and edit paths.
  *                           Mutually exclusive with --dangerously-skip-permissions.
+ *   --accept-edits          Run in `--mode accept-edits`: file edits are auto-approved so a headless run
+ *                           can write, while terminal commands stay gated by Antigravity's permission
+ *                           policy. Mutually exclusive with --read-only.
  *   --dangerously-skip-permissions
  *                           Auto-approve Antigravity tool permission requests. Use only with human approval.
  *                           Mutually exclusive with --read-only.
@@ -155,6 +158,7 @@ function parseArgs(argv) {
     conversation: null,
     sandbox: false,
     readOnly: false,
+    acceptEdits: false,
     dangerouslySkipPermissions: false,
     printTimeout: DEFAULT_PRINT_TIMEOUT,
     timeout: null,
@@ -186,6 +190,7 @@ function parseArgs(argv) {
       case "--conversation": opts.conversation = next(); break;
       case "--sandbox": opts.sandbox = true; flagged.add("sandbox"); break;
       case "--read-only": opts.readOnly = true; flagged.add("readOnly"); break;
+      case "--accept-edits": opts.acceptEdits = true; flagged.add("acceptEdits"); break;
       case "--dangerously-skip-permissions":
         opts.dangerouslySkipPermissions = true;
         flagged.add("dangerouslySkipPermissions");
@@ -201,6 +206,9 @@ function parseArgs(argv) {
   applyFleetLane(opts, flagged);
   if (opts.effort !== null && !["low", "medium", "high"].includes(opts.effort)) {
     fail(`invalid --effort "${opts.effort}" (expected: low, medium, high)`);
+  }
+  if (opts.readOnly && opts.acceptEdits) {
+    fail("--read-only and --accept-edits are mutually exclusive; pass only one");
   }
   if (opts.readOnly && opts.dangerouslySkipPermissions) {
     fail("--read-only and --dangerously-skip-permissions are mutually exclusive; pass only one");
@@ -439,17 +447,22 @@ function buildArgv(opts, brief, run) {
     argv.push("--new-project");
   }
 
-  if (!opts.resumeLast && !opts.conversation) {
-    // The disposable smoke showed that relying on cwd alone can produce a false
-    // "I created the file" response, so pin the workspace explicitly. agy requires
-    // an absolute path here (it rejects "." as non-absolute); opts.cd is already
-    // resolve()d, and an argv-array element carries spaces fine without a shell.
-    argv.push("--add-dir", opts.cd);
-    for (const dir of opts.addDirs) argv.push("--add-dir", dir);
-  }
+  // The disposable smoke showed that relying on cwd alone can produce a false
+  // "I created the file" response, so pin the workspace explicitly. agy requires
+  // an absolute path here (it rejects "." as non-absolute); opts.cd is already
+  // resolve()d, and an argv-array element carries spaces fine without a shell.
+  // Resumed runs pin it too: a resumed conversation does not carry the workspace
+  // registration forward, and --accept-edits only approves edits inside a registered
+  // workspace - without --add-dir a delta brief's write_file is auto-denied.
+  argv.push("--add-dir", opts.cd);
+  for (const dir of opts.addDirs) argv.push("--add-dir", dir);
   if (opts.model) argv.push("--model", opts.model);
   if (opts.effort) argv.push("--effort", opts.effort);
   if (opts.readOnly) argv.push("--mode", "plan");
+  // Headless --print cannot prompt, so without this every file edit is auto-denied. accept-edits
+  // approves edits only; terminal commands still need an allow-rule, which is narrower than
+  // --dangerously-skip-permissions and is why the orchestrator runs the gates itself in review.
+  if (opts.acceptEdits) argv.push("--mode", "accept-edits");
   if (opts.sandbox) argv.push("--sandbox");
   if (opts.dangerouslySkipPermissions) argv.push("--dangerously-skip-permissions");
   if (opts.printTimeout) argv.push("--print-timeout", opts.printTimeout);
@@ -550,6 +563,7 @@ function makeResultWriter(opts, version, run) {
       project: opts.project,
       sandbox: opts.sandbox,
       readOnly: opts.readOnly,
+      acceptEdits: opts.acceptEdits,
       readOnlyViolation: null,
       dangerouslySkipPermissions: opts.dangerouslySkipPermissions,
       resumed: Boolean(opts.resumeLast || opts.conversation),

@@ -65,7 +65,7 @@ Skip setup when you want one implementer or one-off dials. Pick the skill for a 
 | Skill | Implementer CLI | Write access (default) | Read-only run | Resume |
 | --- | --- | --- | --- | --- |
 | [`aider-delegate`](skills/aider-delegate/SKILL.md) | [Aider](https://aider.chat) (`aider`) — any OpenAI-compatible endpoint, including a local or self-hosted model via `--api-base` | `--yes-always` with `--no-suggest-shell-commands`; no sandbox or permission modes; commits force-disabled [^aider] | `--read-only` (`--dry-run`) | `--resume-last` (chat history, per-worktree) |
-| [`agy-delegate`](skills/agy-delegate/SKILL.md) | Google Antigravity (`agy`) | Antigravity's own `permissions`; bypass opt-in | `--read-only` (`plan` mode) | `--resume-last`, `--conversation <id>` |
+| [`agy-delegate`](skills/agy-delegate/SKILL.md) | Google Antigravity (`agy`) | `--accept-edits` (edits only; commands stay gated) or Antigravity's own `permissions`; bypass opt-in | `--read-only` (`plan` mode) | `--resume-last`, `--conversation <id>` |
 | [`claude-delegate`](skills/claude-delegate/SKILL.md) | [Claude Code](https://code.claude.com/docs/en/overview) (`claude`) | `acceptEdits` + explicit tool surface | `--read-only` (`plan` mode) | `--resume-last`, `--session <id>` |
 | [`cline-delegate`](skills/cline-delegate/SKILL.md) | [Cline](https://github.com/cline/cline) (`cline`) | `--auto-approve true` in act mode; upstream sandbox not configured by the relay | `--plan` + `--auto-approve false` (relay-enforced pair) | — (headless JSON resume unsupported) |
 | [`codex-delegate`](skills/codex-delegate/SKILL.md) | [OpenAI Codex](https://github.com/openai/codex) (`codex`) | `--sandbox workspace-write` | `--read-only` | `--resume-last`, `--session <id>` |
@@ -247,8 +247,13 @@ Per skill — platform, CLI version, and what the run exercised:
   report rendered from `response` rather than raw JSON, on a `--read-only` run reporting
   `readOnlyViolation` false; two write dispatches auto-denied headlessly (`command`), reported
   `failed` at exit 1; and a `read_file(*)` rule under `permissions.allow` in
-  `~/.gemini/antigravity-cli/settings.json` clearing a `read_file` denial in `--print` mode. Write and
-  command allow-rules were not exercised.
+  `~/.gemini/antigravity-cli/settings.json` clearing a `read_file` denial in `--print` mode. On `agy` 1.2.4
+  with `gemini-3.1-pro-high`: a `command(node)` rule did not match `node test.mjs` while
+  `command(node test.mjs)` did; `write_file` rules with `**`/`*` globs parsed but did not match, consistent
+  with issue #614; a fresh `--accept-edits` run edited two briefed files with no denials and no allow-rules,
+  and the orchestrator's re-run of the tests passed; a `--conversation` resume under `--accept-edits`
+  without `--add-dir` was denied `write_file`, and with it applied the review comments. Not exercised: a
+  literal `write_file(<dir>)` rule, and `--accept-edits` on macOS or Linux.
 - `claude-delegate` — macOS, `claude` 2.1.220: write run under `acceptEdits`; plan mode refusing an
   edit, with the Git tripwire true on a violation and false on a clean run;
   `--session`/`--resume-last` resume; `claude_unavailable`/127 and usage errors exiting 2 without a

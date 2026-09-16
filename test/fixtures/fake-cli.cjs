@@ -167,6 +167,41 @@ if (process.env.SMOKE_MODE === "agy-silent-edit") {
   process.exit(0);
 }
 if (process.env.SMOKE_MODE === "agy-silent-noop") process.exit(0);
+// agy --output-format json prints one object. A leading banner line is included on
+// purpose: the relay must scan past anything printed ahead of the payload.
+if (process.env.SMOKE_MODE === "agy-json-success") {
+  if (process.env.SMOKE_ARGS_FILE) fs.writeFileSync(process.env.SMOKE_ARGS_FILE, JSON.stringify(args));
+  console.log("fake agy banner line");
+  console.log(JSON.stringify({
+    conversation_id: "agy-conv-json-1",
+    status: "SUCCESS",
+    response: "fake agy json completed",
+    duration_seconds: 1.5,
+    num_turns: 2,
+    usage: { input_tokens: 11, output_tokens: 3, total_tokens: 14 },
+  }));
+  process.exit(0);
+}
+if (process.env.SMOKE_MODE === "agy-json-denied-noop") {
+  console.log(JSON.stringify({
+    conversation_id: "agy-conv-json-2",
+    status: "SUCCESS",
+    response: "",
+    num_turns: 1,
+    denied_actions: [{ action: "command", display_name: "RunCommand" }],
+  }));
+  process.exit(0);
+}
+if (process.env.SMOKE_MODE === "agy-json-denied-reported") {
+  console.log(JSON.stringify({
+    conversation_id: "agy-conv-json-3",
+    status: "SUCCESS",
+    response: "fake agy worked around the denial",
+    num_turns: 3,
+    denied_actions: [{ action: "command", display_name: "RunCommand" }],
+  }));
+  process.exit(0);
+}
 if (process.env.SMOKE_MODE === "zcode-success") {
   fs.writeFileSync(process.env.SMOKE_ARGS_FILE, JSON.stringify(args));
   // ZCode's bundled AI SDK prints this banner with console.info — i.e. on stdout,

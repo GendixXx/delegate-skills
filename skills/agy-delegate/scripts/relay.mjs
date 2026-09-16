@@ -57,15 +57,24 @@
  *                           the system temp dir, so the repo under review stays clean).
  *   -h, --help              Show this help.
  *
+ * The run is dispatched with `--output-format json`, so Antigravity's own structured
+ * payload carries the report, the conversation id, token usage and - the field that
+ * matters most - `denied_actions`, the permissions headless mode auto-denied. A build
+ * that prints prose instead still works: the relay falls back to treating stdout as
+ * the report and to matching Antigravity's stderr denial sentinel.
+ *
  * Result: written to <out-dir>/result.json and summarized on stdout -
- *   status, exitCode, agyVersion, projectId, conversationId, finalMessage
- *   (Antigravity's own report), touchedFiles (git porcelain, null if git can't report),
- *   readOnlyViolation (on --read-only), and the paths to brief.txt, final.txt, agy.log, and stderr.txt.
+ *   status, exitCode, agyVersion, agyStatus, projectId, conversationId, usage, numTurns,
+ *   deniedActions, finalMessage (Antigravity's own report), touchedFiles (git porcelain,
+ *   null if git can't report), readOnlyViolation (on --read-only), and the paths to
+ *   brief.txt, final.txt, agy.log, and stderr.txt.
  *
  * Exit codes: a pre-run usage error (bad/missing args, empty brief) exits 2
  * before any run and writes no result file; a missing `agy` binary exits 127;
- * otherwise the exit code mirrors Antigravity's own, except that an exit-zero
- * permission denial or silent write-dispatch no-op is forced to exit 1.
+ * otherwise the exit code mirrors Antigravity's own, except that a permission
+ * denial that left the run with nothing to show, or a silent write-dispatch no-op,
+ * is forced to exit 1. A denial the run worked around still completes and is
+ * reported in `deniedActions`.
  * If the child dies on a signal, the exit code is 128 plus the signal number and
  * `result.json` records the signal.
  * Once the brief validates, `result.json` is written on every outcome -
@@ -444,12 +453,62 @@ function buildArgv(opts, brief, run) {
   if (opts.sandbox) argv.push("--sandbox");
   if (opts.dangerouslySkipPermissions) argv.push("--dangerously-skip-permissions");
   if (opts.printTimeout) argv.push("--print-timeout", opts.printTimeout);
+  // Ask for the structured payload rather than prose. It carries conversation_id,
+  // usage, num_turns and - the reason this is not cosmetic - denied_actions, so a
+  // headless permission denial is read from a field instead of matched against a
+  // sentence agy is free to reword. parseAgyPayload falls back to raw stdout when a
+  // build predates --output-format json or prints something else entirely.
+  argv.push("--output-format", "json");
   argv.push("--log-file", run.logPath);
   // Use the --print=<brief> form, not a separate ["--print", brief] pair: agy's flag
   // parser intercepts a value that is exactly a bare flag (a brief consisting only of
   // "--help" or "-h" prints usage instead of running). The = form always binds the value.
   argv.push(`--print=${brief}`);
   return argv;
+}
+
+function parseAgyPayload(stdout) {
+  // `--output-format json` prints one JSON object. Scan from the last line back so a
+  // banner or warning printed on stdout ahead of the payload cannot shadow it, then
+  // try the whole buffer in case the object was pretty-printed across lines. Returns
+  // null for any build or mode that printed prose instead - the caller falls back to
+  // treating stdout as the report, which is what the text format always gave us.
+  const trimmed = stdout.trim();
+  if (!trimmed) return null;
+  const asObject = (text) => {
+    try {
+      const parsed = JSON.parse(text);
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : null;
+    } catch {
+      return null;
+    }
+  };
+  const lines = trimmed.split("\n");
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    const line = lines[i].trim();
+    if (!line.startsWith("{")) continue;
+    const parsed = asObject(line);
+    if (parsed) return parsed;
+  }
+  return asObject(trimmed);
+}
+
+function reportFrom(stdout) {
+  const payload = parseAgyPayload(stdout);
+  return (typeof payload?.response === "string" ? payload.response : stdout).trim();
+}
+
+function deniedActionsFrom(payload) {
+  // Shape observed on agy 1.2.x: [{ action: "command", display_name: "RunCommand" }].
+  // Keep unknown entries rather than dropping them - a denial we cannot name is still
+  // a denial the reviewer must see.
+  const raw = payload?.denied_actions;
+  if (!Array.isArray(raw) || raw.length === 0) return null;
+  return raw.map((entry) => {
+    if (typeof entry === "string") return entry;
+    const action = entry?.action ?? entry?.display_name;
+    return typeof action === "string" && action ? action : JSON.stringify(entry);
+  });
 }
 
 function parseIdsFromLog(logPath) {
@@ -497,6 +556,10 @@ function makeResultWriter(opts, version, run) {
       agyVersion: version,
       projectId: ids.projectId,
       conversationId: ids.conversationId,
+      agyStatus: null,
+      usage: null,
+      numTurns: null,
+      deniedActions: null,
       startedAt: run.startedAt,
       finishedAt: new Date().toISOString(),
       briefPath: run.briefPath,
@@ -579,7 +642,7 @@ function dispatchToAgy(opts, brief, run, writeResult, watchdogMs) {
       settled = true;
       clearTimeout(watchdogTimer);
       if (sigkillTimer) clearTimeout(sigkillTimer);
-      const finalMessage = stdout.trim();
+      const finalMessage = reportFrom(stdout);
       if (finalMessage) writeFileSync(run.finalPath, finalMessage, "utf8");
       const abortedFields = {
         status: "aborted",
@@ -655,7 +718,7 @@ function dispatchToAgy(opts, brief, run, writeResult, watchdogMs) {
     settled = true;
     clearTimeout(watchdogTimer);
     if (sigkillTimer) clearTimeout(sigkillTimer);
-    const finalMessage = stdout.trim();
+    const finalMessage = reportFrom(stdout);
     if (finalMessage) writeFileSync(run.finalPath, finalMessage, "utf8");
     const afterState = gitWorktreeFingerprint(opts.cd, relayArtifacts);
     const readOnlyViolation = readOnlyVerdict(opts, beforeState, afterState);
@@ -680,18 +743,31 @@ function dispatchToAgy(opts, brief, run, writeResult, watchdogMs) {
     // a descendant that ignored SIGTERM must not outlive the timeout report: once the
     // parent is down, sweep the group (no-op where taskkill already felled the tree)
     if (watchdogFired) killChild(child, "SIGKILL");
-    const finalMessage = stdout.trim();
+    const payload = parseAgyPayload(stdout);
+    // The payload's `response` is the report; without a payload the whole of stdout is,
+    // which is exactly what the text output format used to give us.
+    const finalMessage = (typeof payload?.response === "string" ? payload.response : stdout).trim();
     if (finalMessage) writeFileSync(run.finalPath, finalMessage, "utf8");
     const touchedFiles = gitTouchedFiles(opts.cd);
     const stderr = readFileSync(run.stderrPath, "utf8");
     const diagnostics = stderr.split("\n").map((line) => line.trimEnd()).filter(Boolean).slice(-20);
-    const permissionDenied = /no output produced\s+[—-]\s+a tool required the "([^"]+)" permission that headless\s+mode cannot prompt for, so it was auto-denied/i.exec(stderr);
+    const deniedActions = deniedActionsFrom(payload);
+    // Prefer the structured field; fall back to the stderr sentinel for a build that
+    // printed prose. The sentinel only ever appears on a run that produced nothing,
+    // so the two agree on the case that matters and the field also catches denials
+    // agy reported while still finishing.
+    const sentinelDenied = /no output produced\s+[—-]\s+a tool required the "([^"]+)" permission that headless\s+mode cannot prompt for, so it was auto-denied/i.exec(stderr);
+    const deniedNames = deniedActions ?? (sentinelDenied ? [sentinelDenied[1]] : null);
     // A clean read-only run still owes the caller a plan. With neither a final message
     // nor observable worktree changes, exit 0 cannot confirm any dispatch completed.
     const afterState = gitWorktreeFingerprint(opts.cd, relayArtifacts);
     const worktreeChanged = beforeState !== null && afterState !== null && beforeState !== afterState;
     const readOnlyViolation = readOnlyVerdict(opts, beforeState, afterState);
     const silentNoop = code === 0 && !finalMessage && !worktreeChanged;
+    // A denial that stopped the run dead is a failure. A denial the run worked around -
+    // it still reported, or it still edited - is not: it completes, and the denial rides
+    // in `deniedActions` and the summary so the reviewer weighs it instead of it vanishing.
+    const permissionDenied = Boolean(deniedNames) && !finalMessage && !worktreeChanged;
     // A timed-out run is failed even if agy handles SIGTERM by exiting 0 -
     // orchestrators key off status and the relay exit code.
     const succeeded = code === 0 && !watchdogFired && !permissionDenied && !silentNoop;
@@ -703,6 +779,13 @@ function dispatchToAgy(opts, brief, run, writeResult, watchdogMs) {
       finalMessage,
       touchedFiles,
       readOnlyViolation,
+      ...(typeof payload?.conversation_id === "string" && payload.conversation_id
+        ? { conversationId: payload.conversation_id }
+        : {}),
+      ...(typeof payload?.status === "string" ? { agyStatus: payload.status } : {}),
+      ...(payload?.usage && typeof payload.usage === "object" ? { usage: payload.usage } : {}),
+      ...(Number.isFinite(payload?.num_turns) ? { numTurns: payload.num_turns } : {}),
+      ...(deniedNames ? { deniedActions: deniedNames } : {}),
       ...(!succeeded || !finalMessage ? { stderrTail: diagnostics } : {}),
       ...(watchdogFired
         ? {
@@ -711,7 +794,7 @@ function dispatchToAgy(opts, brief, run, writeResult, watchdogMs) {
               : `agy did not exit within --print-timeout ${opts.printTimeout} plus 60s grace; killed by the relay watchdog`,
           }
         : permissionDenied
-          ? { error: `Antigravity auto-denied the ${permissionDenied[1]} permission because headless --print cannot prompt; ask the human whether to re-dispatch with --dangerously-skip-permissions and treat that run as full access` }
+          ? { error: `Antigravity auto-denied ${deniedNames.join(", ")} because headless --print cannot prompt, and the run produced nothing. Prefer a narrow allow-rule under permissions.allow in agy's settings.json (e.g. ${deniedNames[0]}(<target>)) over --dangerously-skip-permissions, which auto-approves every tool request and makes the run full access` }
           : silentNoop
             ? { error: "agy exited 0 without a final message or observable working-tree changes; the relay cannot confirm this dispatch completed" }
             : {}),
@@ -767,6 +850,16 @@ function printSummary(result, resultPath) {
   if (result.resumed) lines.push("mode: resumed an existing conversation");
   if (result.projectId) lines.push(`project id: ${result.projectId}`);
   if (result.conversationId) lines.push(`conversation id (resume with: --conversation ${result.conversationId}): ${result.conversationId}`);
+  if (result.usage) {
+    const u = result.usage;
+    lines.push(`tokens: ${u.total_tokens ?? "?"} total (in ${u.input_tokens ?? "?"}, out ${u.output_tokens ?? "?"})`);
+  }
+  if (result.deniedActions && result.deniedActions.length) {
+    lines.push(`denied permissions: ${result.deniedActions.join(", ")}`);
+    if (result.status === "completed") {
+      lines.push("warning: Antigravity was denied a permission and finished anyway - the run may be partial; read the report and the diff before trusting it.");
+    }
+  }
   const touched = result.touchedFiles;
   if (touched === null) {
     lines.push("touched files: git unavailable - inspect the working tree directly");

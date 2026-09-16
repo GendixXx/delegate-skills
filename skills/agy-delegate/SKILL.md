@@ -39,8 +39,9 @@ Code; treat other orchestrators as designed-for, not yet proven.
 3. You are in (or will point `--cd` at) the target git repository.
 
 These checks do not prove that a headless write will be approved. In `--print` mode, Antigravity
-cannot prompt for a write permission and may auto-deny it. The relay detects that denial instead of
-reporting completion.
+cannot prompt for a permission and auto-denies it. The relay reads those denials out of the run's
+structured payload into `deniedActions` rather than reporting a clean completion; the fix is a narrow
+allow-rule in Antigravity's settings (see Permission model, below).
 
 ## Choose the implementer model
 
@@ -92,6 +93,8 @@ resume when it returns:
 Do not trust progress trackers over reality: a run is finished when `result.json` is written and the
 process has exited. Read the working tree, not a status line. The implementer's full report is
 the `finalMessage` field in `result.json` (also printed in full on stdout between the report markers).
+Check `deniedActions` in the same file before you review: a run that was denied a permission and
+carried on anyway can look complete and be partial.
 
 ### 4. Review - do not trust the self-report
 
@@ -124,16 +127,21 @@ Use `--sandbox` when you want Antigravity's terminal sandbox enabled for the run
 Antigravity's own help says `--dangerously-skip-permissions` auto-approves all tool permission
 requests without prompting, including a request to act outside the sandbox. Do not treat
 `--sandbox` as an enforced boundary when the flags are combined; treat the run as full access.
-If headless `--print` auto-denies a write, the relay reports `status: "failed"` and exits non-zero.
 The relay fingerprints the working tree before and after a `--read-only` run to report
-`readOnlyViolation` in `result.json`. Settings allow-rules under `permissions.allow` in
-`~/.gemini/antigravity-cli/settings.json` do apply to headless `--print` runs — a `write_file` rule
-naming the workspace is what allows a headless write. On Windows, however, an open upstream defect in
-Antigravity's permission engine
+`readOnlyViolation` in `result.json`.
+
+Headless `--print` cannot prompt, so Antigravity auto-denies anything it would have asked about.
+The relay reads those denials from the run's structured payload into `deniedActions`. A denial
+that left the run with nothing is `status: "failed"` and a non-zero exit; a denial the run worked
+around still completes, with `deniedActions` and a summary warning so you can judge whether the
+work is partial. **The fix for a denial is a narrow allow-rule under `permissions.allow` in
+`~/.gemini/antigravity-cli/settings.json`, not the bypass flag** - allow-rules do apply to headless
+`--print` runs. On Windows, however, an open upstream defect in Antigravity's permission engine
 ([issue #614](https://github.com/google-antigravity/antigravity-cli/issues/614)) splits resolved paths on
 whitespace, preventing `command(<name>)` rules from matching binaries installed under paths with spaces
-such as `C:\Program Files\...`. See [references/dispatch-and-poll.md](references/dispatch-and-poll.md)
-for Windows workarounds. Do not add the bypass flag without explicit human approval.
+such as `C:\Program Files\...`. Propose the exact rule to the human and let them apply it; do not edit
+their Antigravity config yourself, and do not add the bypass flag without explicit human approval.
+Details and Windows workarounds: [references/dispatch-and-poll.md](references/dispatch-and-poll.md).
 
 ## Authorization model
 

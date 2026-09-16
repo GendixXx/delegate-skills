@@ -164,4 +164,47 @@ export async function runAgy(h) {
     analysis.value.status === "completed" &&
     analysis.value.exitCode === 0 &&
     analysis.value.finalMessage === "fake agy analysis completed");
+
+  const jsonArgsFile = join(h.scratch, "args-json-success-agy");
+  const jsonWorkDir = h.freshRepo("work-json-success-agy");
+  const jsonOutDir = join(h.scratch, "out-json-success-agy");
+  const jsonSuccess = spawnSync(process.execPath, [
+    h.relayPath("agy"),
+    "--brief", h.briefPath,
+    "--cd", jsonWorkDir,
+    "--out-dir", jsonOutDir,
+  ], {
+    env: { ...h.baseEnv, SMOKE_MODE: "agy-json-success", SMOKE_ARGS_FILE: jsonArgsFile },
+    encoding: "utf8",
+    timeout: 15_000,
+  });
+  const jsonValue = existsSync(join(jsonOutDir, "result.json")) ? h.result(jsonOutDir) : {};
+  h.check("agy json: the run asks agy for the structured payload",
+    h.pair(readArgs(jsonArgsFile), "--output-format", "json"));
+  h.check("agy json: the payload's response becomes the report, not the raw JSON",
+    jsonSuccess.status === 0 &&
+    jsonValue.status === "completed" &&
+    jsonValue.finalMessage === "fake agy json completed");
+  h.check("agy json: conversation id, usage and turn count come from the payload",
+    jsonValue.conversationId === "agy-conv-json-1" &&
+    jsonValue.agyStatus === "SUCCESS" &&
+    jsonValue.usage?.total_tokens === 14 &&
+    jsonValue.numTurns === 2);
+
+  const jsonDenied = run("json-denied-noop", "agy-json-denied-noop");
+  h.check("agy json: a denial that produced nothing is failed and names the action",
+    jsonDenied.result.status === 1 &&
+    jsonDenied.value.status === "failed" &&
+    jsonDenied.value.exitCode === 1 &&
+    jsonDenied.value.deniedActions?.includes("command") &&
+    jsonDenied.value.error?.includes("permissions.allow"));
+
+  const jsonDeniedReported = run("json-denied-reported", "agy-json-denied-reported");
+  h.check("agy json: a denial the run worked around completes and is still surfaced",
+    jsonDeniedReported.result.status === 0 &&
+    jsonDeniedReported.value.status === "completed" &&
+    jsonDeniedReported.value.exitCode === 0 &&
+    jsonDeniedReported.value.finalMessage === "fake agy worked around the denial" &&
+    jsonDeniedReported.value.deniedActions?.includes("command") &&
+    jsonDeniedReported.result.stdout.includes("denied permissions: command"));
 }

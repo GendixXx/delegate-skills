@@ -242,7 +242,13 @@ Per skill — platform, CLI version, and what the run exercised:
   `readOnly` true, `readOnlyViolation` false; argument validation for a bad `--effort` value and for
   `--read-only` combined with `--dangerously-skip-permissions`, both exiting 2; resume by
   `--conversation` with a delta brief. macOS, `agy` 1.0.16: headless edit run, `--print=` delivery,
-  absolute `--add-dir` workspace pin.
+  absolute `--add-dir` workspace pin. Windows 10, native, `agy` 1.2.2/1.2.4: `--output-format json`
+  dispatch whose payload supplied `conversationId`, `agyStatus`, `usage` and `numTurns`, with the
+  report rendered from `response` rather than raw JSON, on a `--read-only` run reporting
+  `readOnlyViolation` false; two write dispatches auto-denied headlessly (`command`), reported
+  `failed` at exit 1; and a `read_file(*)` rule under `permissions.allow` in
+  `~/.gemini/antigravity-cli/settings.json` clearing a `read_file` denial in `--print` mode. Write and
+  command allow-rules were not exercised.
 - `claude-delegate` — macOS, `claude` 2.1.220: write run under `acceptEdits`; plan mode refusing an
   edit, with the Git tripwire true on a violation and false on a clean run;
   `--session`/`--resume-last` resume; `claude_unavailable`/127 and usage errors exiting 2 without a

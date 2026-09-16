@@ -58,8 +58,18 @@ touched-files report shows only Antigravity's edits and nothing of the helper's 
 - `exitCode` - mirrors Antigravity's exit code; `128` plus the signal number if the child was killed; `127` if `agy` is not on PATH; on a `timeout` the relay forces a non-zero code even when the child exited `0` after the watchdog's SIGTERM
 - `signal` - the signal that killed the child, otherwise `null`
 - `agyVersion` - inferred from `agy changelog` when available
-- `projectId` / `conversationId` - parsed from the Antigravity log when present
-- `finalMessage` - Antigravity's stdout response
+- `agyStatus` - Antigravity's own run status from the payload (e.g. `SUCCESS`); `null` without a payload.
+  It is recorded, not acted on - the relay's own `status` is the field to branch on
+- `projectId` - parsed from the Antigravity log when present
+- `conversationId` - the payload's `conversation_id`, falling back to the Antigravity log
+- `finalMessage` - the payload's `response`; the whole of stdout when there is no payload
+- `usage` - the payload's token counts (`input_tokens`, `output_tokens`, `total_tokens`, …); `null` without a payload
+- `numTurns` - the payload's `num_turns`; `null` without a payload
+- `deniedActions` - the permissions headless mode auto-denied, by name (e.g. `["command"]`), from the
+  payload's `denied_actions` or, failing that, Antigravity's stderr denial sentinel. `null` when nothing
+  was denied. **A denial does not by itself fail the run:** if Antigravity still reported or still edited,
+  `status` is `completed` and this field is how you learn the run may be partial. It fails only when the
+  denial left nothing behind
 - `touchedFiles` - `git status --porcelain` lines in the working root: your review starting point.
   `null` (not `[]`) when git cannot report; `[]` means git ran and the tree is clean
 - `readOnlyViolation` - `true` when fingerprints prove a working-tree change, `false` when coverage is complete and proves none, and `null` when fingerprinting was incomplete or the run was not `--read-only`
@@ -72,8 +82,17 @@ touched-files report shows only Antigravity's edits and nothing of the helper's 
 - `error` - present on a launch failure, `timeout`, `aborted`, headless permission denial, or silent no-op
 
 The helper also prints a summary to stdout and normally exits with Antigravity's exit code. It forces
-exit 1 when Antigravity exits 0 after a detected headless permission denial or with neither a final
-message nor observable working-tree changes, so a wrapping script can branch on success/failure directly.
+exit 1 when Antigravity exits 0 after a headless permission denial that produced nothing, or with neither
+a final message nor observable working-tree changes, so a wrapping script can branch on success/failure
+directly.
+
+## Why the run asks for JSON
+
+The relay dispatches with `--output-format json`, so Antigravity returns one structured object rather than
+prose. Three things come from it that text mode could not give: `conversation_id` without scraping the log,
+token `usage`, and `denied_actions` - the permissions headless mode auto-denied, as a field instead of a
+sentence the CLI is free to reword. A build that prints prose anyway still works: the relay treats stdout
+as the report and falls back to matching the stderr denial sentinel.
 
 ## Waiting for completion
 
@@ -101,22 +120,56 @@ process has exited and `result.json` is written.
   inspect the working tree before re-dispatching. On native Windows a hard kill of the relay is
   uncatchable (Node supports no `SIGTERM` handler there), so this status may never get written -
   a relay process that is gone without a `result.json` is an aborted run; inspect the working
-  tree and `events.jsonl` directly.
+  tree and the run's `agy.log` and `stderr.txt` directly.
 - **`status: failed` with `signal: "SIGKILL"`:** the host ended the child - commonly the OOM killer
   or a supervisor timeout, not an implementer error. Free up host memory or split the task into
   smaller briefs, then re-dispatch.
 - **`status: failed`:** read `result.json`'s `stderrTail`, `stderrPath`, and `logPath` for the cause.
   Common causes: auth lapse, an unknown model label, timeout, or a permission the run needed.
-- **Headless write permission denied:** the relay detects Antigravity's `no output produced ...
-  auto-denied` stderr sentinel, reports `status: failed`, preserves `stderrTail`, and exits 1.
-  Settings allow-rules under `permissions.allow` in `~/.gemini/antigravity-cli/settings.json` do
-  apply to `--print` runs, but on Windows a `command(<name>)` rule may be unable to match. See
-  [Windows permission engine traps](#windows-permission-engine-traps) below before re-dispatching
-  or asking to use `--dangerously-skip-permissions`.
+- **Headless permission denied:** `deniedActions` names what Antigravity auto-denied. If the denial left
+  the run with nothing - no report, no edits - the relay reports `status: failed`, preserves `stderrTail`,
+  and exits 1. If the run worked around it, `status` stays `completed` and the denial rides in
+  `deniedActions` with a warning in the summary; read the report and the diff, because the run may be
+  partial. Either way the fix is an allow-rule, not the bypass flag - see
+  [Allow-rules before the bypass flag](#allow-rules-before-the-bypass-flag), and on Windows
+  [Windows permission engine traps](#windows-permission-engine-traps), before re-dispatching or asking
+  to use `--dangerously-skip-permissions`.
 - **Empty `finalMessage`:** a run with edits may still be correct - check `touchedFiles`, the diff, and
   the preserved `stderrTail`. With no observable edits, the relay reports `status: failed` rather than
   claiming completion. To get a report next time, add a `<structured_output_contract>` block (see
   [writing-the-brief.md](writing-the-brief.md)).
+
+## Allow-rules before the bypass flag
+
+Headless `--print` cannot prompt, so Antigravity auto-denies any permission it would otherwise ask about.
+On a default install that can stop a dispatch before it reads a single file. There are two ways out, and
+they are not equivalent:
+
+1. **A narrow allow-rule** in Antigravity's CLI settings - `permissions.allow` in
+   `~/.gemini/antigravity-cli/settings.json` (the CLI creates neither the file nor the directory entry for
+   you; `agy` names the path it tried to read in its own log). Each rule is `<action>(<target>)`, and
+   `deniedActions` in `result.json` gives you the action name to write:
+
+   ```json
+   {
+     "permissions": {
+       "allow": ["read_file(*)"]
+     }
+   }
+   ```
+
+   Allow-rules apply in `--print` mode: on agy 1.2.x a dispatch auto-denied `read_file` ran normally once
+   a `read_file(*)` rule was added, and a `write_file` rule naming the workspace allows a headless write.
+   `command(...)` matches the full command string, and on Windows the traps
+   [below](#windows-permission-engine-traps) apply to both `command` and `write_file` rules.
+
+2. **`--dangerously-skip-permissions`**, which auto-approves *every* tool permission request, including
+   requests to act outside the sandbox. It is not a scoped grant and the whole run must be treated as full
+   access.
+
+Prefer (1). Reach for (2) only with the human's explicit agreement. Either way this is a change to the
+human's machine-wide Antigravity config: propose the exact rule, say what it grants, and let them apply
+it rather than editing their settings yourself.
 
 ## What the helper is doing
 
